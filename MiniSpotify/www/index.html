@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Mini Spotify Distribuido</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            transition: background-color 0.5s ease;
+        }
+        .container {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 30px;
+            border-radius: 15px;
+            display: inline-block;
+            width: 400px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        h1 { margin: 0; font-size: 24px; }
+        .puerto-badge {
+            background: white; color: black; padding: 5px 15px;
+            border-radius: 20px; font-weight: bold; margin: 15px 0; display: inline-block;
+        }
+        .lista-canciones {
+            text-align: left; background: rgba(255,255,255,0.1);
+            margin: 20px 0; max-height: 250px; overflow-y: auto; border-radius: 5px;
+        }
+        .cancion-item {
+            padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); cursor: pointer;
+        }
+        .cancion-item:hover { background: rgba(255,255,255,0.2); }
+        audio { width: 100%; margin-top: 20px; }
+        #mensaje { font-size: 12px; color: #ddd; margin-top: 10px; }
+    </style>
+</head>
+<body onload="iniciar()">
+
+<div class="container">
+    <h1>Mini Spotify</h1>
+    <div class="puerto-badge" id="badge">Cargando...</div>
+
+    <div class="lista-canciones" id="lista">Cargando biblioteca...</div>
+
+    <audio id="player" controls autoplay></audio>
+    <p id="mensaje">Esperando selección...</p>
+</div>
+
+<script>
+    function iniciar() {
+        // 1. DETECTAR EN QUÉ SERVIDOR ESTAMOS
+        const puerto = window.location.port;
+        const badge = document.getElementById('badge');
+
+
+        if (puerto === "8000") {
+            document.body.style.backgroundColor = "#121212"; // Negro (Router)
+            badge.innerText = "ROUTER CENTRAL (8000)";
+        } else if (puerto === "8081") {
+            document.body.style.backgroundColor = "#8b0000"; // Rojo Oscuro (Rock)
+            badge.innerText = "PUERTO ROCK (8081)";
+        } else if (puerto === "8082") {
+            document.body.style.backgroundColor = "#00008b"; // Azul Oscuro (Pop)
+            badge.innerText = "PUERTO POP (8082)";
+        } else if (puerto === "8083") {
+            document.body.style.backgroundColor = "#2f4f4f"; // Gris Pizarra (Metal)
+            badge.innerText = "PUERTO METAL (8083)";
+        } else {
+            document.body.style.backgroundColor = "#333";
+            badge.innerText = "SERVIDOR " + puerto;
+        }
+
+        // 3. CARGAR LISTA DE CANCIONES
+        fetch('/lista').then(r => r.text()).then(data => {
+            const divLista = document.getElementById('lista');
+            divLista.innerHTML = "";
+            const canciones = data.split('\n');
+            canciones.forEach(nombre => {
+                if(!nombre.trim()) return;
+                const item = document.createElement('div');
+                item.className = 'cancion-item';
+                item.innerText = "🎵 " + nombre;
+                item.onclick = () => saltarAlRouter(nombre); // Al hacer click, vamos al Router
+                divLista.appendChild(item);
+            });
+        });
+
+        // 4. VERIFICAR SI VENIMOS REDIRIGIDOS (Auto-Play)
+        const params = new URLSearchParams(window.location.search);
+        const cancionAPoner = params.get('play');
+
+        if (cancionAPoner) {
+            document.getElementById('mensaje').innerText = "Reproduciendo desde este Puerto: " + cancionAPoner;
+
+            document.getElementById('player').src = cancionAPoner;
+        }
+    }
+
+    function saltarAlRouter(nombre) {
+        // Enviamos al usuario al puerto 8000. Él decidirá a dónde redirigirnos.
+        document.getElementById('mensaje').innerText = "Contactando al Router (8000)...";
+
+        window.location.href = "http://localhost:8000/" + nombre;
+    }
+</script>
+</body>
+</html>

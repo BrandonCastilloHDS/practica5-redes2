@@ -1,58 +1,89 @@
-package cliente; // Coincide con tu otra carpeta
+package cliente;
 
+import javazoom.jl.player.Player;
+import javax.swing.*;
+import java.awt.*;
 import java.io.*;
 import java.net.*;
-import java.util.Scanner;
 
-public class ClienteSpotify {
-    public static void main(String[] args) {
-        Scanner sc = new Scanner(System.in);
-        System.out.println("--- MINI SPOTIFY CLIENTE ---");
-        System.out.print("Nombre de la cancion : ");
-        String cancion = sc.nextLine();
+// Cambiamos la clase para que herede de JFrame (la ventana)
+public class ClienteSpotify extends JFrame {
+    private JTextField txtCancion;
+    private JTextArea txtAreaLog;
+    private JButton btnReproducir;
 
-        // Siempre le pedimos al puerto 8000 (el balanceador)
-        solicitarAlServidor("http://localhost:8000/" + cancion);
+    public ClienteSpotify() {
+        // 1. Configuración de la ventana principal
+        setTitle("Mini Spotify Player");
+        setSize(500, 400);
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setLayout(new BorderLayout());
+
+        // 2. Panel superior (Entrada de texto y Botón)
+        JPanel panelControl = new JPanel(new FlowLayout());
+        panelControl.add(new JLabel("Nombre de canción:"));
+        txtCancion = new JTextField(20);
+        panelControl.add(txtCancion);
+        btnReproducir = new JButton("Play");
+        panelControl.add(btnReproducir);
+
+        // 3. Panel central (Área de texto para mensajes del sistema)
+        txtAreaLog = new JTextArea();
+        txtAreaLog.setEditable(false);
+        txtAreaLog.setBackground(new Color(30, 30, 30)); // Estilo oscuro
+        txtAreaLog.setForeground(Color.GREEN);
+        JScrollPane scrollLog = new JScrollPane(txtAreaLog);
+
+        // Agregar paneles a la ventana
+        add(panelControl, BorderLayout.NORTH);
+        add(scrollLog, BorderLayout.CENTER);
+
+        // 4. Lógica del botón Play
+        btnReproducir.addActionListener(e -> {
+            String cancion = txtCancion.getText().trim();
+            if (!cancion.isEmpty()) {
+                // Ejecutamos en un hilo separado para que la ventana no se trabe al sonar
+                new Thread(() -> iniciarStreaming(cancion)).start();
+            } else {
+                txtAreaLog.append("Por favor, escribe el nombre de una canción.\n");
+            }
+        });
     }
 
-    public static void solicitarAlServidor(String urlString) {
+    private void iniciarStreaming(String cancion) {
         try {
-            URL url = new URL(urlString);
+            txtAreaLog.append("\n[Solicitud] Enviando a Router (8000): " + cancion + "\n");
+
+            URL url = new URL("http://localhost:8000/" + cancion);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
 
-            // IMPORTANTE: Permitir que siga la redirección al 8081 u 8082
+            // Permitir que el cliente siga la redirección automáticamente
             conn.setInstanceFollowRedirects(true);
 
-            System.out.println("Buscando en sistema...");
             int status = conn.getResponseCode();
 
             if (status == HttpURLConnection.HTTP_OK) {
-                // El URL final puede haber cambiado debido a la redirección
-                System.out.println("¡Conectado exitosamente al servidor final!");
-                System.out.println("Descargando desde: " + conn.getURL());
+                // Mostramos a qué puerto nos mandó el servidor 8000 (8081, 8082, 8083)
+                txtAreaLog.append("[Éxito] Redirigido al servidor: " + conn.getURL().getPort() + "\n");
+                txtAreaLog.append("[Streaming] Reproduciendo ahora...\n");
 
-                String nombreArchivo = "reproduciendo_" + cancionDesdeUrl(conn.getURL().toString());
+                // Streaming directo con JLayer
+                InputStream in = new BufferedInputStream(conn.getInputStream());
+                Player reproductor = new Player(in); //
+                reproductor.play();
 
-                try (InputStream in = conn.getInputStream();
-                     FileOutputStream out = new FileOutputStream(nombreArchivo)) {
-
-                    byte[] buffer = new byte[4096];
-                    int leido;
-                    while ((leido = in.read(buffer)) != -1) {
-                        out.write(buffer, 0, leido);
-                    }
-                }
-                System.out.println("Archivo '" + nombreArchivo + "' recibido y listo para sonar.");
             } else {
-                System.out.println("Error: No se encontró la canción (Status " + status + ")");
+                txtAreaLog.append("[Error] Código " + status + ": Canción no encontrada.\n");
             }
-
         } catch (Exception e) {
-            System.err.println("Error de conexión: " + e.getMessage());
+            txtAreaLog.append("[Error de Conexión] " + e.getMessage() + "\n");
         }
     }
 
-    private static String cancionDesdeUrl(String url) {
-        return url.substring(url.lastIndexOf('/') + 1);
+    public static void main(String[] args) {
+        // Iniciar la interfaz visual
+        SwingUtilities.invokeLater(() -> {
+            new ClienteSpotify().setVisible(true);
+        });
     }
 }

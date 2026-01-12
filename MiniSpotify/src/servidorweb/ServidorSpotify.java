@@ -1,91 +1,153 @@
-package servidorweb; // Coincide con tu carpeta
+package servidorweb;
 
 import java.io.*;
 import java.net.*;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.concurrent.*;
 
 public class ServidorSpotify {
     private int puerto;
+    private int limiteHilos;
     private ThreadPoolExecutor pool;
-    public static final String CARPETA_WEB = "www";
 
-    public ServidorSpotify(int puerto) {
+    public static final String CARPETA_WEB = "MiniSpotify/www";
+
+    public ServidorSpotify(int puerto, int limiteHilos) {
         this.puerto = puerto;
-        this.pool = (ThreadPoolExecutor) Executors.newFixedThreadPool(10);
-        File dir = new File(CARPETA_WEB);
-        if (!dir.exists()) dir.mkdir();
+        this.limiteHilos = limiteHilos;
+        this.pool = (ThreadPoolExecutor) Executors.newFixedThreadPool(limiteHilos);
+
+        File directory = new File(CARPETA_WEB);
+        if (!directory.exists()) directory.mkdir();
     }
 
     public void iniciar() {
         try (ServerSocket serverSocket = new ServerSocket(puerto)) {
-            System.out.println("Servidor Spotify iniciado en puerto: " + puerto);
+            System.out.println("-> Nodo [" + puerto + "] listo y escuchando.");
             while (true) {
                 Socket cliente = serverSocket.accept();
-                pool.execute(new ManejadorRecurso(cliente, puerto));
+                pool.execute(new ManejadorSpotify(cliente, puerto));
             }
-        } catch (IOException e) { e.printStackTrace(); }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
-    private static class ManejadorRecurso implements Runnable {
-        private Socket socket;
-        private int puertoActual;
+    private static class ManejadorSpotify implements Runnable {
+        private Socket socket; //conexión con el cliente
+        private int puertoServidor;
 
-        public ManejadorRecurso(Socket s, int p) { this.socket = s; this.puertoActual = p; }
+        public ManejadorSpotify(Socket socket, int puerto) {
+            this.socket = socket;
+            this.puertoServidor = puerto;
+        }
 
         @Override
         public void run() {
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                 OutputStream out = socket.getOutputStream()) {
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                 OutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
 
-                String linea = in.readLine();
-                if (linea == null) return;
+                String requestLine = reader.readLine();
+                if (requestLine == null) return;
 
-                String[] partes = linea.split(" ");
-                if (partes.length < 2) return;
-                String path = partes[1].substring(1).toLowerCase();
+                StringTokenizer tokenizer = new StringTokenizer(requestLine); //extraemos la ruta
+                tokenizer.nextToken(); // Salta GET
+                String path = tokenizer.nextToken().substring(1).toLowerCase(); // Obtiene la ruta
 
-                // Lógica de Redirección en puerto 8000
-                if (puertoActual == 8000) {
+                if (path.isEmpty()) path = "index.html";
+
+
+                if (path.startsWith("lista")) {
+                    enviarListaCanciones(out);
+                    return;
+                }
+
+
+                if (puertoServidor == 8000 && !path.equals("index.html") && !path.startsWith("favicon")) {
                     if (path.contains("rock")) {
-                        System.out.println("[8000] -> Redirigiendo Rock al 8081");
-                        enviarRedireccion(out, "http://localhost:8081/" + path);
+                        // Redirigimos la VENTANA (index.html) al puerto 8081 con el parámetro play
+                        redirigir(out, "http://localhost:8081/index.html?play=" + path);
                         return;
                     } else if (path.contains("pop")) {
-                        System.out.println("[8000] -> Redirigiendo Pop al 8082");
-                        enviarRedireccion(out, "http://localhost:8082/" + path);
+                        redirigir(out, "http://localhost:8082/index.html?play=" + path);
+                        return;
+                    } else if (path.contains("metal")) {
+                        redirigir(out, "http://localhost:8083/index.html?play=" + path);
                         return;
                     }
                 }
 
+                // Si no es redirección, entregamos el archivo (html o mp3) localmente
                 enviarArchivo(path, out);
-            } catch (Exception e) { e.printStackTrace(); }
-            finally { try { socket.close(); } catch (IOException e) {} }
+
+            } catch (Exception e) {
+                // Silenciamos errores de conexión interrumpida (común en navegadores)
+            } finally {
+                try { socket.close(); } catch (IOException e) {}
+            }
         }
 
-        private void enviarRedireccion(OutputStream out, String url) throws IOException {
+        private void enviarListaCanciones(OutputStream out) throws IOException {
+            File carpeta = new File(CARPETA_WEB);
+            File[] archivos = carpeta.listFiles();
+            StringBuilder lista = new StringBuilder();
+
+            if (archivos != null) {
+                for (File f : archivos) {
+                    if (f.isFile() && f.getName().toLowerCase().endsWith(".mp3")) {
+                        lista.append(f.getName()).append("\n");
+                    }
+                }
+            }
+            byte[] bytes = lista.toString().getBytes();
+            String header = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" +
+                    "Access-Control-Allow-Origin: *\r\nContent-Length: " + bytes.length + "\r\n\r\n";
+            out.write(header.getBytes());
+            out.write(bytes);
+            out.flush();
+        }
+
+        private void redirigir(OutputStream out, String url) throws IOException {
+            // 302 Found mueve al navegador a la nueva URL
             String res = "HTTP/1.1 302 Found\r\nLocation: " + url + "\r\nConnection: close\r\n\r\n";
             out.write(res.getBytes());
             out.flush();
         }
 
-        private void enviarArchivo(String path, OutputStream out) throws IOException {
-            File file = new File(CARPETA_WEB + File.separator + path);
-            if (file.exists() && !file.isDirectory()) {
-                out.write("HTTP/1.1 200 OK\r\nContent-Type: audio/mpeg\r\nConnection: close\r\n\r\n".getBytes());
-                Files.copy(file.toPath(), out);
+        private void enviarArchivo(String fileName, OutputStream out) throws IOException {
+            // Limpiamos parámetros de URL si vienen (ej: index.html?play=...)
+            if (fileName.contains("?")) fileName = fileName.split("\\?")[0];
+
+            File file = new File(CARPETA_WEB + File.separator + fileName);
+            if (file.exists()) {
+                String mime = "audio/mpeg";
+                if (fileName.endsWith(".html")) mime = "text/html";
+                if (fileName.endsWith(".css")) mime = "text/css";
+                if (fileName.endsWith(".js")) mime = "application/javascript";
+
+                String header = "HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\n" +
+                        "Access-Control-Allow-Origin: *\r\nContent-Length: " + file.length() + "\r\n\r\n";
+                out.write(header.getBytes());
+
+                try (FileInputStream fis = new FileInputStream(file)) {
+                    byte[] buffer = new byte[8192];
+                    int leidos;
+                    while ((leidos = fis.read(buffer)) != -1) out.write(buffer, 0, leidos);
+                }
+                out.flush();
             } else {
-                out.write("HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>404 No encontrado</h1>".getBytes());
+                out.write("HTTP/1.1 404 Not Found\r\n\r\n<h1>404</h1>".getBytes());
             }
-            out.flush();
         }
     }
 
     public static void main(String[] args) {
-        // Iniciamos los 3 nodos del sistema
-        new Thread(() -> new ServidorSpotify(8000).iniciar()).start(); // Router
-        new Thread(() -> new ServidorSpotify(8081).iniciar()).start(); // Rock
-        new Thread(() -> new ServidorSpotify(8082).iniciar()).start(); // Pop
+        int hilos = 10;
+        // Levantamos los hilos
+        new Thread(() -> new ServidorSpotify(8000, hilos).iniciar()).start(); // Router
+        new Thread(() -> new ServidorSpotify(8081, hilos).iniciar()).start(); // cancion 1
+        new Thread(() -> new ServidorSpotify(8082, hilos).iniciar()).start(); // cancion 2
+        new Thread(() -> new ServidorSpotify(8083, hilos).iniciar()).start(); // cancion 3
+        System.out.println("Iniciando MiniSpotify");
     }
 }
